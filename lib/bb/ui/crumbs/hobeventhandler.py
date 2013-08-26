@@ -146,7 +146,9 @@ class HobHandler(gobject.GObject):
         elif next_command == self.SUB_MATCH_CLASS:
             self.runCommand(["findFilesMatchingInDir", "rootfs_", "classes"])
         elif next_command == self.SUB_PARSE_CONFIG:
+            self.runCommand(["enableDataTracking"])
             self.runCommand(["parseConfigurationFiles", "conf/.hob.conf", ""])
+            self.runCommand(["disableDataTracking"])
         elif next_command == self.SUB_GNERATE_TGTS:
             self.runCommand(["generateTargetsTree", "classes/image.bbclass", []])
         elif next_command == self.SUB_GENERATE_PKGINFO:
@@ -172,9 +174,9 @@ class HobHandler(gobject.GObject):
                 targets.append(self.toolchain)
             if targets[0] == "hob-image":
                 hobImage = self.runCommand(["matchFile", "hob-image.bb"])
-                if self.base_image != "Create your own image":
+                if self.base_image != "Start with an empty image recipe":
                     baseImage = self.runCommand(["matchFile", self.base_image + ".bb"])
-                    version = self.runCommand(["generateNewImage", hobImage, baseImage, self.package_queue])
+                    version = self.runCommand(["generateNewImage", hobImage, baseImage, self.package_queue, True, ""])
                     targets[0] += version
                     self.recipe_model.set_custom_image_version(version)
 
@@ -424,6 +426,13 @@ class HobHandler(gobject.GObject):
         self.commands_async.append(self.SUB_BUILD_IMAGE)
         self.run_next_command(self.GENERATE_IMAGE)
 
+    def generate_new_image(self, image, base_image, package_queue, description):
+        base_image = self.runCommand(["matchFile", self.base_image + ".bb"])
+        self.runCommand(["generateNewImage", image, base_image, package_queue, False, description])
+
+    def ensure_dir(self, directory):
+        self.runCommand(["ensureDir", directory])
+
     def build_succeeded_async(self):
         self.building = False
 
@@ -450,6 +459,9 @@ class HobHandler(gobject.GObject):
     def get_logfile(self):
         return self.server.runCommand(["getVariable", "BB_CONSOLELOG"])[0]
 
+    def get_topdir(self):
+        return self.runCommand(["getVariable", "TOPDIR"]) or ""
+
     def _remove_redundant(self, string):
         ret = []
         for i in string.split():
@@ -459,8 +471,17 @@ class HobHandler(gobject.GObject):
 
     def set_var_in_file(self, var, val, default_file=None):
         self.runCommand(["enableDataTracking"])
-        self.server.runCommand(["setVarFile", var, val, default_file])
+        self.server.runCommand(["setVarFile", var, val, default_file, "set"])
         self.runCommand(["disableDataTracking"])
+
+    def append_var_in_file(self, var, val, default_file=None):
+        self.server.runCommand(["setVarFile", var, val, default_file, "append"])
+
+    def append_to_bbfiles(self, val):
+        bbfiles = self.runCommand(["getVariable", "BBFILES", "False"]) or ""
+        bbfiles = bbfiles.split()
+        if val not in bbfiles:
+            self.append_var_in_file("BBFILES", val, "local.conf")
 
     def get_parameters(self):
         # retrieve the parameters from bitbake

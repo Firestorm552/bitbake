@@ -157,7 +157,7 @@ class PRServer(SimpleXMLRPCServer):
         pf.close()
 
         self.work_forever()
-        self.delpid
+        self.delpid()
         os._exit(0)
 
 class PRServSingleton():
@@ -186,9 +186,6 @@ class PRServerConnection():
         self.connection, self.transport = bb.server.xmlrpc._create_server(self.host, self.port)
 
     def terminate(self):
-        # Don't wait for server indefinitely
-        import socket
-        socket.setdefaulttimeout(2)
         try:
             logger.info("Terminating PRServer...")
             self.connection.quit()

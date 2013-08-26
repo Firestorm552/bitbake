@@ -63,6 +63,7 @@ def clean_class_handlers():
 # Internal
 _handlers = clean_class_handlers()
 _ui_handlers = {}
+_ui_logfilters = {}
 _ui_handler_seq = 0
 _event_handler_map = {}
 _catchall_handlers = {}
@@ -135,6 +136,8 @@ def fire_ui_handlers(event, d):
     for h in _ui_handlers:
         #print "Sending event %s" % event
         try:
+             if not _ui_logfilters[h].filter(event):
+                 continue
              # We use pickle here since it better handles object instances
              # which xmlrpc's marshaller does not. Events *must* be serializable
              # by pickle.
@@ -190,7 +193,7 @@ def register(name, handler, mask=[]):
         else:
             _handlers[name] = handler
 
-        if not mask:
+        if not mask or '*' in mask:
             _catchall_handlers[name] = True
         else:
             for m in mask:
@@ -207,12 +210,45 @@ def remove(name, handler):
 def register_UIHhandler(handler):
     bb.event._ui_handler_seq = bb.event._ui_handler_seq + 1
     _ui_handlers[_ui_handler_seq] = handler
+    level, debug_domains = bb.msg.constructLogOptions()
+    _ui_logfilters[_ui_handler_seq] = UIEventFilter(level, debug_domains)
     return _ui_handler_seq
 
 def unregister_UIHhandler(handlerNum):
     if handlerNum in _ui_handlers:
         del _ui_handlers[handlerNum]
     return
+
+# Class to allow filtering of events and specific filtering of LogRecords *before* we put them over the IPC
+class UIEventFilter(object):
+    def __init__(self, level, debug_domains):
+        self.update(None, level, debug_domains)
+
+    def update(self, eventmask, level, debug_domains):
+        self.eventmask = eventmask
+        self.stdlevel = level
+        self.debug_domains = debug_domains
+
+    def filter(self, event):
+        if isinstance(event, logging.LogRecord):
+            if event.levelno >= self.stdlevel:
+                return True
+            if event.name in self.debug_domains and event.levelno >= self.debug_domains[event.name]:
+                return True
+            return False
+        eid = str(event.__class__)[8:-2]
+        if eid not in self.eventmask:
+            return False
+        return True
+
+def set_UIHmask(handlerNum, level, debug_domains, mask):
+    if not handlerNum in _ui_handlers:
+        return False
+    if '*' in mask:
+        _ui_logfilters[handlerNum].update(None, level, debug_domains)
+    else:
+        _ui_logfilters[handlerNum].update(mask, level, debug_domains)
+    return True
 
 def getName(e):
     """Returns the name of a class or class instance"""
@@ -341,12 +377,13 @@ class DiskFull(Event):
 class NoProvider(Event):
     """No Provider for an Event"""
 
-    def __init__(self, item, runtime=False, dependees=None, reasons=[]):
+    def __init__(self, item, runtime=False, dependees=None, reasons=[], close_matches=[]):
         Event.__init__(self)
         self._item = item
         self._runtime = runtime
         self._dependees = dependees
         self._reasons = reasons
+        self._close_matches = close_matches
 
     def getItem(self):
         return self._item

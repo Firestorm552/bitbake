@@ -30,6 +30,7 @@ import shlex
 import re
 import logging
 import sys
+import signal
 from bb.ui.crumbs.imageconfigurationpage import ImageConfigurationPage
 from bb.ui.crumbs.recipeselectionpage import RecipeSelectionPage
 from bb.ui.crumbs.packageselectionpage import PackageSelectionPage
@@ -191,7 +192,7 @@ class Configuration:
         self.split_proxy("socks", params["socks_proxy"])
         self.split_proxy("cvs", params["cvs_proxy_host"] + ":" + params["cvs_proxy_port"])
 
-    def save(self, handler, template, defaults=False):
+    def save(self, handler, defaults=False):
         # bblayers.conf
         handler.set_var_in_file("BBLAYERS", self.layers, "bblayers.conf")
         # local.conf
@@ -439,7 +440,10 @@ class Builder(gtk.Window):
         self.handler.connect("recipe-populated",         self.handler_recipe_populated_cb)
         self.handler.connect("package-populated",        self.handler_package_populated_cb)
 
+        self.handler.append_to_bbfiles("${TOPDIR}/recipes/images/*.bb")
         self.initiate_new_build_async()
+
+        signal.signal(signal.SIGINT, self.event_handle_SIGINT)
 
     def create_visual_elements(self):
         self.set_title("Hob")
@@ -516,6 +520,7 @@ class Builder(gtk.Window):
         self.handler.generate_configuration()
 
     def initiate_new_build_async(self):
+        self.configuration.selected_image = None
         self.switch_page(self.MACHINE_SELECTION)
         self.handler.init_cooker()
         self.handler.set_extra_inherit("image_types")
@@ -589,6 +594,16 @@ class Builder(gtk.Window):
                                     packages,
                                     toolchain_packages,
                                     self.configuration.default_task)
+
+    def generate_new_image(self, image, description):
+        base_image = self.configuration.initial_selected_image
+        if base_image == self.recipe_model.__custom_image__:
+            base_image = None
+        packages = self.package_model.get_selected_packages()
+        self.handler.generate_new_image(image, base_image, packages, description)
+
+    def ensure_dir(self, directory):
+        self.handler.ensure_dir(directory)
 
     def get_parameters_sync(self):
         return self.handler.get_parameters()
@@ -1075,6 +1090,12 @@ class Builder(gtk.Window):
         else:
             gtk.main_quit()
 
+    def event_handle_SIGINT(self, signal, frame):
+        for w in gtk.window_list_toplevels():
+            if w.get_modal():
+                w.response(gtk.RESPONSE_DELETE_EVENT)
+        sys.exit(0)
+
     def build_packages(self):
         _, all_recipes = self.recipe_model.get_selected_recipes()
         if not all_recipes:
@@ -1229,7 +1250,7 @@ class Builder(gtk.Window):
         settings_changed = False
         if response == gtk.RESPONSE_YES:
             self.configuration = dialog.configuration
-            self.save_defaults() # remember settings
+            self.configuration.save(self.handler, True) # remember settings
             settings_changed = dialog.settings_changed
         dialog.destroy()
         return response == gtk.RESPONSE_YES, settings_changed
@@ -1257,7 +1278,7 @@ class Builder(gtk.Window):
         settings_changed = False
         if response == gtk.RESPONSE_YES:
             self.configuration = dialog.configuration
-            self.save_defaults() # remember settings
+            self.configuration.save(self.handler, True) # remember settings
             settings_changed = dialog.settings_changed
             if dialog.proxy_settings_changed:
                 self.set_user_config_proxies()
@@ -1442,3 +1463,6 @@ class Builder(gtk.Window):
             self.consolelog.setFormatter(format)
 
             self.logger.addHandler(self.consolelog)
+
+    def get_topdir(self):
+        return self.handler.get_topdir()

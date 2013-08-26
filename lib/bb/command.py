@@ -90,8 +90,7 @@ class Command:
                 (command, options) = self.currentAsyncCommand
                 commandmethod = getattr(CommandsAsync, command)
                 needcache = getattr( commandmethod, "needcache" )
-                if (needcache and self.cooker.state in
-                    (bb.cooker.state.initial, bb.cooker.state.parsing)):
+                if needcache and self.cooker.state != bb.cooker.state.running:
                     self.cooker.updateCache()
                     return True
                 else:
@@ -153,7 +152,7 @@ class CommandsSync:
         varname = params[0]
         expand = True
         if len(params) > 1:
-            expand = params[1]
+            expand = (params[1] == "True")
 
         return command.cooker.data.getVar(varname, expand)
     getVariable.readonly = True
@@ -214,7 +213,14 @@ class CommandsSync:
         image = params[0]
         base_image = params[1]
         package_queue = params[2]
-        return command.cooker.generateNewImage(image, base_image, package_queue)
+        timestamp = params[3]
+        description = params[4]
+        return command.cooker.generateNewImage(image, base_image,
+                        package_queue, timestamp, description)
+
+    def ensureDir(self, command, params):
+        directory = params[0]
+        bb.utils.mkdirhier(directory)
 
     def setVarFile(self, command, params):
         """
@@ -223,7 +229,8 @@ class CommandsSync:
         var = params[0]
         val = params[1]
         default_file = params[2]
-        command.cooker.saveConfigurationVar(var, val, default_file)
+        op = params[3]
+        command.cooker.modifyConfigurationVar(var, val, default_file, op)
 
     def createConfigFile(self, command, params):
         """
@@ -231,6 +238,13 @@ class CommandsSync:
         """
         name = params[0]
         command.cooker.createConfigFile(name)
+
+    def setEventMask(self, command, params):
+        handlerNum = params[0]
+        llevel = params[1]
+        debug_domains = params[2]
+        mask = params[3]
+        return bb.event.set_UIHmask(handlerNum, llevel, debug_domains, mask)
 
 class CommandsAsync:
     """

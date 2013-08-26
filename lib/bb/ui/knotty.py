@@ -232,6 +232,15 @@ def _log_settings_from_server(server):
         raise BaseException(error)
     return includelogs, loglines, consolelogfile
 
+_evt_list = [ "bb.runqueue.runQueueExitWait", "bb.event.LogExecTTY", "logging.LogRecord",
+              "bb.build.TaskFailed", "bb.build.TaskBase", "bb.event.ParseStarted",
+              "bb.event.ParseProgress", "bb.event.ParseCompleted", "bb.event.CacheLoadStarted",
+              "bb.event.CacheLoadProgress", "bb.event.CacheLoadCompleted", "bb.command.CommandFailed",
+              "bb.command.CommandExit", "bb.command.CommandCompleted",  "bb.cooker.CookerExit",
+              "bb.event.MultipleProviders", "bb.event.NoProvider", "bb.runqueue.sceneQueueTaskStarted",
+              "bb.runqueue.runQueueTaskStarted", "bb.runqueue.runQueueTaskFailed", "bb.runqueue.sceneQueueTaskFailed",
+              "bb.event.BuildBase", "bb.build.TaskStarted", "bb.build.TaskSucceeded", "bb.build.TaskFailedSilent"]
+
 def main(server, eventHandler, params, tf = TerminalFilter):
 
     includelogs, loglines, consolelogfile = _log_settings_from_server(server)
@@ -261,6 +270,9 @@ def main(server, eventHandler, params, tf = TerminalFilter):
         bb.msg.addDefaultlogFilter(consolelog)
         consolelog.setFormatter(conlogformat)
         logger.addHandler(consolelog)
+
+    llevel, debug_domains = bb.msg.constructLogOptions()
+    server.runCommand(["setEventMask", server.getEventHandle(), llevel, debug_domains, _evt_list])
 
     if not params.observe_only:
         params.updateFromServer(server)
@@ -416,10 +428,15 @@ def main(server, eventHandler, params, tf = TerminalFilter):
                 else:
                     r = ""
 
+                extra = ''
+                if not event._reasons:
+                    if event._close_matches:
+                        extra = ". Close matches:\n  %s" % '\n  '.join(event._close_matches)
+
                 if event._dependees:
-                    logger.error("Nothing %sPROVIDES '%s' (but %s %sDEPENDS on or otherwise requires it)", r, event._item, ", ".join(event._dependees), r)
+                    logger.error("Nothing %sPROVIDES '%s' (but %s %sDEPENDS on or otherwise requires it)%s", r, event._item, ", ".join(event._dependees), r, extra)
                 else:
-                    logger.error("Nothing %sPROVIDES '%s'", r, event._item)
+                    logger.error("Nothing %sPROVIDES '%s'%s", r, event._item, extra)
                 if event._reasons:
                     for reason in event._reasons:
                         logger.error("%s", reason)

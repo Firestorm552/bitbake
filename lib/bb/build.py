@@ -190,6 +190,20 @@ def exec_func(func, d, dirs = None):
     runfile = os.path.join(tempdir, runfn)
     bb.utils.mkdirhier(os.path.dirname(runfile))
 
+    # Setup the courtesy link to the runfn, only for tasks
+    # we create the link 'just' before the run script is created
+    # if we create it after, and if the run script fails, then the
+    # link won't be created as an exception would be fired.
+    if task == func:
+        runlink = os.path.join(tempdir, 'run.{0}'.format(task))
+        if runlink:
+            bb.utils.remove(runlink)
+
+            try:
+                os.symlink(runfn, runlink)
+            except OSError:
+                pass
+
     with bb.utils.fileslocked(lockfiles):
         if ispython:
             exec_func_python(func, d, runfile, cwd=adir)
@@ -250,7 +264,24 @@ def exec_func_shell(func, d, runfile, cwd=None):
     d.delVarFlag('PWD', 'export')
 
     with open(runfile, 'w') as script:
-        script.write('#!/bin/sh -e\n')
+        script.write('''#!/bin/sh\n
+# Emit a useful diagnostic if something fails:
+bb_exit_handler() {
+    ret=$?
+    case $ret in
+    0)  ;;
+    *)  case $BASH_VERSION in
+        "")   echo "WARNING: exit code $ret from a shell command.";;
+        *)    echo "WARNING: ${BASH_SOURCE[0]}:${BASH_LINENO[0]} exit $ret from
+  \"$BASH_COMMAND\"";;
+        esac
+        exit $ret
+    esac
+}
+trap 'bb_exit_handler' 0
+set -e
+''')
+
         bb.data.emit_func(func, script, d)
 
         if bb.msg.loggerVerboseLogs:
@@ -258,6 +289,12 @@ def exec_func_shell(func, d, runfile, cwd=None):
         if cwd:
             script.write("cd %s\n" % cwd)
         script.write("%s\n" % func)
+        script.write('''
+# cleanup
+ret=$?
+trap '' 0
+exit $?
+''')
 
     os.chmod(runfile, 0775)
 

@@ -162,6 +162,35 @@ class BBCooker:
         self.data = self.databuilder.data
         self.data_hash = self.databuilder.data_hash
 
+    def modifyConfigurationVar(self, var, val, default_file, op):
+        if op == "append":
+            self.appendConfigurationVar(var, val, default_file)
+        elif op == "set":
+            self.saveConfigurationVar(var, val, default_file)
+
+    def appendConfigurationVar(self, var, val, default_file):
+        #add append var operation to the end of default_file
+        default_file = bb.cookerdata.findConfigFile(default_file)
+
+        with open(default_file, 'r') as f:
+            contents = f.readlines()
+        f.close()
+
+        total = ""
+        for c in contents:
+            total += c
+
+        total += "#added by bitbake"
+        total += "\n%s += \"%s\"\n" % (var, val)
+
+        with open(default_file, 'w') as f:
+            f.write(total)
+        f.close()
+
+        #add to history
+        loginfo = {"op":append, "file":default_file, "line":total.count("\n")}
+        self.data.appendVar(var, val, **loginfo)
+
     def saveConfigurationVar(self, var, val, default_file):
 
         replaced = False
@@ -234,7 +263,7 @@ class BBCooker:
                 total += c
 
             #add the variable on a single line, to be easy to replace the second time
-            total += "#added by bitbake"
+            total += "\n#added by bitbake"
             total += "\n%s = \"%s\"\n" % (var, val)
 
             with open(default_file, 'w') as f:
@@ -1100,25 +1129,46 @@ class BBCooker:
 
         self.configuration.server_register_idlecallback(buildTargetsIdle, rq)
 
-    def generateNewImage(self, image, base_image, package_queue):
+    def generateNewImage(self, image, base_image, package_queue, timestamp, description):
         '''
-        Create a new image with a "require" base_image statement
+        Create a new image with a "require"/"inherit" base_image statement
         '''
-        image_name = os.path.splitext(image)[0]
-        timestr = time.strftime("-%Y%m%d-%H%M%S")
-        dest = image_name + str(timestr) + ".bb"
+        if timestamp:
+            image_name = os.path.splitext(image)[0]
+            timestr = time.strftime("-%Y%m%d-%H%M%S")
+            dest = image_name + str(timestr) + ".bb"
+        else:
+            if not image.endswith(".bb"):
+                dest = image + ".bb"
+            else:
+                dest = image
+
+        if base_image:
+            with open(base_image, 'r') as f:
+                require_line = f.readline()
 
         with open(dest, "w") as imagefile:
-            imagefile.write("require " + base_image + "\n")
-            package_install = "PACKAGE_INSTALL_forcevariable = \""
+            if base_image is None:
+                imagefile.write("inherit image\n")
+            else:
+                topdir = self.data.getVar("TOPDIR")
+                if topdir in base_image:
+                    base_image = require_line.split()[1]
+                imagefile.write("require " + base_image + "\n")
+            image_install = "IMAGE_INSTALL = \""
             for package in package_queue:
-                package_install += str(package) + " "
-            package_install += "\"\n"
-            imagefile.write(package_install)
+                image_install += str(package) + " "
+            image_install += "\"\n"
+            imagefile.write(image_install)
+
+            description_var = "DESCRIPTION = \"" + description + "\"\n"
+            imagefile.write(description_var)
 
         self.state = state.initial
-        return timestr
+        if timestamp:
+            return timestr
 
+    # This is called for all async commands when self.state != running
     def updateCache(self):
         if self.state == state.running:
             return

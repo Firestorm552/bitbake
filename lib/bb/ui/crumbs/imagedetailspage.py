@@ -27,6 +27,7 @@ from bb.ui.crumbs.hobwidget import hic, HobViewTable, HobAltButton, HobButton
 from bb.ui.crumbs.hobpages import HobPage
 import subprocess
 from bb.ui.crumbs.hig.crumbsdialog import CrumbsDialog
+from bb.ui.crumbs.hig.saveimagedialog import SaveImageDialog
 
 #
 # ImageDetailsPage
@@ -188,7 +189,10 @@ class ImageDetailsPage (HobPage):
         self.image_store = []
         self.button_ids = {}
         self.details_bottom_buttons = gtk.HBox(False, 6)
+        self.image_saved = False
         self.create_visual_elements()
+        self.name_field_template = ""
+        self.description_field_template = ""
 
     def create_visual_elements(self):
         # create visual elements
@@ -247,7 +251,7 @@ class ImageDetailsPage (HobPage):
         self.pack_start(self.group_align, expand=True, fill=True)
 
         self.build_result = None
-        if self.build_succeeded and self.builder.current_step == self.builder.IMAGE_GENERATING:
+        if self.image_saved or (self.build_succeeded and self.builder.current_step == self.builder.IMAGE_GENERATING):
             # building is the previous step
             icon = gtk.Image()
             pixmap_path = hic.ICON_INDI_CONFIRM_FILE
@@ -255,11 +259,14 @@ class ImageDetailsPage (HobPage):
             pix_buffer = gtk.gdk.pixbuf_new_from_file(pixmap_path)
             icon.set_from_pixbuf(pix_buffer)
             varlist = [""]
-            vallist = ["Your image is ready"]
+            if self.image_saved:
+                vallist = ["Your image recipe has been saved"]
+            else:
+                vallist = ["Your image is ready"]
             self.build_result = self.BuildDetailBox(varlist=varlist, vallist=vallist, icon=icon, color=color)
             self.box_group_area.pack_start(self.build_result, expand=False, fill=False)
 
-        self.buttonlist = ["Build new image", "Run image", "Deploy image"]
+        self.buttonlist = ["Build new image", "Save image recipe", "Run image", "Deploy image"]
 
         # Name
         self.image_store = []
@@ -333,13 +340,18 @@ class ImageDetailsPage (HobPage):
         #    self.kernel_detail = self.DetailBox(varlist=varlist, vallist=vallist, button=change_kernel_button)
         #    self.box_group_area.pack_start(self.kernel_detail, expand=True, fill=True)
 
-        # Machine, Base image and Layers
+        # Machine, Image recipe and Layers
         layer_num_limit = 15
-        varlist = ["Machine: ", "Base image: ", "Layers: "]
+        varlist = ["Machine: ", "Image recipe: ", "Layers: "]
         vallist = []
         self.setting_detail = None
         if self.build_succeeded:
             vallist.append(machine)
+            if self.builder.recipe_model.is_custom_image():
+                if self.builder.configuration.initial_selected_image == self.builder.recipe_model.__custom_image__:
+                    base_image ="New image recipe"
+                else:
+                    base_image = self.builder.configuration.initial_selected_image + " (edited)"
             vallist.append(base_image)
             i = 0
             for layer in layers:
@@ -359,7 +371,7 @@ class ImageDetailsPage (HobPage):
                 i += 1
 
             edit_config_button = HobAltButton("Edit configuration")
-            edit_config_button.set_tooltip_text("Edit machine, base image and recipes")
+            edit_config_button.set_tooltip_text("Edit machine and image recipe")
             edit_config_button.connect("clicked", self.edit_config_button_clicked_cb)
             self.setting_detail = self.DetailBox(varlist=varlist, vallist=vallist, button=edit_config_button)
             self.box_group_area.pack_start(self.setting_detail, expand=True, fill=True)
@@ -391,6 +403,7 @@ class ImageDetailsPage (HobPage):
         self.show_all()
         if self.kernel_detail and (not is_runnable):
             self.kernel_detail.hide()
+        self.image_saved = False
 
     def view_files_clicked_cb(self, button, image_addr):
         subprocess.call("xdg-open /%s" % image_addr, shell=True)
@@ -574,6 +587,15 @@ class ImageDetailsPage (HobPage):
             created = True
             is_runnable = True
 
+        name = "Save image recipe"
+        if name in buttonlist and self.builder.recipe_model.is_custom_image():
+            save_button = HobAltButton("Save image recipe")
+            save_button.set_tooltip_text("Keep your changes saving them as an image recipe")
+            save_button.set_sensitive(not self.image_saved)
+            button_id = save_button.connect("clicked", self.save_button_clicked_cb)
+            self.button_ids[button_id] = save_button
+            self.details_bottom_buttons.pack_end(save_button, expand=False, fill=False)
+
         name = "Build new image"
         if name in buttonlist:
             # create button "Build new image"
@@ -607,6 +629,16 @@ class ImageDetailsPage (HobPage):
                 self.set_sensitive(True)
             else:
                 self.builder.runqemu_image(self.toggled_image, self.sel_kernel)
+
+    def save_button_clicked_cb(self, button):
+        topdir = self.builder.get_topdir()
+        images_dir = topdir + "/recipes/images/"
+        self.builder.ensure_dir(images_dir)
+
+        dialog = SaveImageDialog(images_dir, self.name_field_template, self.description_field_template,
+                 "Save image recipe", self.builder, gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT)
+        response = dialog.run()
+        dialog.destroy()
 
     def build_new_button_clicked_cb(self, button):
         self.builder.initiate_new_build_async()

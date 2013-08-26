@@ -474,9 +474,9 @@ class RecipeListModel(gtk.ListStore):
     provide filtered views of the data.
     """
     (COL_NAME, COL_DESC, COL_LIC, COL_GROUP, COL_DEPS, COL_BINB, COL_TYPE, COL_INC, COL_IMG, COL_INSTALL, COL_PN, COL_FADE_INC, COL_SUMMARY, COL_VERSION,
-     COL_REVISION, COL_HOMEPAGE, COL_BUGTRACKER) = range(17)
+     COL_REVISION, COL_HOMEPAGE, COL_BUGTRACKER, COL_FILE) = range(18)
 
-    __custom_image__ = "Create your own image"
+    __custom_image__ = "Start with an empty image recipe"
 
     __gsignals__ = {
         "recipe-selection-changed" : (gobject.SIGNAL_RUN_LAST,
@@ -500,6 +500,7 @@ class RecipeListModel(gtk.ListStore):
                                 gobject.TYPE_STRING,
                                 gobject.TYPE_STRING,
                                 gobject.TYPE_BOOLEAN,
+                                gobject.TYPE_STRING,
                                 gobject.TYPE_STRING,
                                 gobject.TYPE_STRING,
                                 gobject.TYPE_STRING,
@@ -678,15 +679,8 @@ class RecipeListModel(gtk.ListStore):
         self.clear()
 
         # dummy image for prompt
-        self.set(self.append(), self.COL_NAME, self.__custom_image__,
-                 self.COL_DESC, "Use 'Edit image' to customize recipes and packages " \
-                                "to be included in your image ",
-                 self.COL_LIC, "", self.COL_GROUP, "",
-                 self.COL_DEPS, "", self.COL_BINB, "",
-                 self.COL_TYPE, "image", self.COL_INC, False,
-                 self.COL_IMG, False, self.COL_INSTALL, "", self.COL_PN, self.__custom_image__,
-                 self.COL_SUMMARY, "", self.COL_VERSION, "", self.COL_REVISION, "",
-                 self.COL_HOMEPAGE, "", self.COL_BUGTRACKER, "")
+        self.set_in_list(self.__custom_image__,  "Use 'Edit image recipe' to customize recipes and packages " \
+                                "to be included in your image ")
 
         for item in event_model["pn"]:
             name = item
@@ -699,6 +693,7 @@ class RecipeListModel(gtk.ListStore):
             revision = event_model["pn"][item]["revision"]
             homepage = event_model["pn"][item]["homepage"]
             bugtracker = event_model["pn"][item]["bugtracker"]
+            filename = event_model["pn"][item]["filename"]
             install = []
 
             depends = event_model["depends"].get(item, []) + event_model["rdepends-pn"].get(item, [])
@@ -722,8 +717,26 @@ class RecipeListModel(gtk.ListStore):
                      self.COL_TYPE, atype, self.COL_INC, False,
                      self.COL_IMG, False, self.COL_INSTALL, " ".join(install), self.COL_PN, item,
                      self.COL_SUMMARY, summary, self.COL_VERSION, version, self.COL_REVISION, revision,
-                     self.COL_HOMEPAGE, homepage, self.COL_BUGTRACKER, bugtracker)
+                     self.COL_HOMEPAGE, homepage, self.COL_BUGTRACKER, bugtracker,
+                     self.COL_FILE, filename)
 
+        self.pn_path = {}
+        it = self.get_iter_first()
+        while it:
+            pn = self.get_value(it, self.COL_NAME)
+            path = self.get_path(it)
+            self.pn_path[pn] = path
+            it = self.iter_next(it)
+
+    def set_in_list(self, item, desc):
+        self.set(self.append(), self.COL_NAME, item,
+                 self.COL_DESC, desc,
+                 self.COL_LIC, "", self.COL_GROUP, "",
+                 self.COL_DEPS, "", self.COL_BINB, "",
+                 self.COL_TYPE, "image", self.COL_INC, False,
+                 self.COL_IMG, False, self.COL_INSTALL, "", self.COL_PN, item,
+                 self.COL_SUMMARY, "", self.COL_VERSION, "", self.COL_REVISION, "",
+                 self.COL_HOMEPAGE, "", self.COL_BUGTRACKER, "")
         self.pn_path = {}
         it = self.get_iter_first()
         while it:
@@ -882,3 +895,6 @@ class RecipeListModel(gtk.ListStore):
 
     def get_custom_image_version(self):
         return self.custom_image_version
+
+    def is_custom_image(self):
+        return self.get_selected_image() == self.__custom_image__

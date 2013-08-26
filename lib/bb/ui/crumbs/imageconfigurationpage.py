@@ -28,6 +28,7 @@ from bb.ui.crumbs.hobcolor import HobColors
 from bb.ui.crumbs.hobwidget import hic, HobImageButton, HobInfoButton, HobAltButton, HobButton
 from bb.ui.crumbs.hoblistmodel import RecipeListModel
 from bb.ui.crumbs.hobpages import HobPage
+from bb.ui.crumbs.hig.retrieveimagedialog import RetrieveImageDialog
 
 #
 # ImageConfigurationPage
@@ -35,7 +36,8 @@ from bb.ui.crumbs.hobpages import HobPage
 class ImageConfigurationPage (HobPage):
 
     __dummy_machine__ = "--select a machine--"
-    __dummy_image__   = "--select a base image--"
+    __dummy_image__   = "--select an image recipe--"
+    __custom_image__  = "Select from my image recipes"
 
     def __init__(self, builder):
         super(ImageConfigurationPage, self).__init__(builder, "Image configuration")
@@ -47,6 +49,7 @@ class ImageConfigurationPage (HobPage):
         self.machine_combo_changed_by_manual = True
         self.stopping = False
         self.warning_shift = 0
+        self.custom_image_selected = None
         self.create_visual_elements()
 
     def create_visual_elements(self):
@@ -200,12 +203,9 @@ class ImageConfigurationPage (HobPage):
         markup += "http://www.yoctoproject.org/docs/current/dev-manual/"
         markup += "dev-manual.html#understanding-and-using-layers\">reference manual</a>."
         self.layer_info_icon = HobInfoButton("<b>Layers</b>" + "*" + markup, self.get_parent())
-#        self.progress_box = gtk.HBox(False, 6)
         self.progress_bar = HobProgressBar()
-#        self.progress_box.pack_start(self.progress_bar, expand=True, fill=True)
         self.stop_button = HobAltButton("Stop")
         self.stop_button.connect("clicked", self.stop_button_clicked_cb)
-#        self.progress_box.pack_end(stop_button, expand=False, fill=False)
         self.machine_separator = gtk.HSeparator()
 
     def set_config_machine_layout(self, show_progress_bar = False):
@@ -229,17 +229,19 @@ class ImageConfigurationPage (HobPage):
     def create_config_baseimg(self):
         self.image_title = gtk.Label()
         self.image_title.set_alignment(0, 1.0)
-        mark = "<span %s>Select a base image</span>" % self.span_tag('x-large', 'bold')
+        mark = "<span %s>Select an image recipe</span>" % self.span_tag('x-large', 'bold')
         self.image_title.set_markup(mark)
 
         self.image_title_desc = gtk.Label()
         self.image_title_desc.set_alignment(0, 0.5)
-        mark = ("<span %s>Base images are a starting point for the type of image you want. "
+
+        mark = ("<span %s>Image recipes are a starting point for the type of image you want. "
                 "You can build them as \n"
-                "they are or customize them to your specific needs.\n</span>") % self.span_tag('medium')
+                "they are or edit them to suit your needs.\n</span>") % self.span_tag('medium')
         self.image_title_desc.set_markup(mark)
 
         self.image_combo = gtk.combo_box_new_text()
+        self.image_combo.set_row_separator_func(self.combo_separator_func, None)
         self.image_combo_id = self.image_combo.connect("changed", self.image_combo_changed_cb)
 
         self.image_desc = gtk.Label()
@@ -258,6 +260,11 @@ class ImageConfigurationPage (HobPage):
 
         self.image_separator = gtk.HSeparator()
 
+    def combo_separator_func(self, model, iter, user_data):
+        name = model.get_value(iter, 0)
+        if name == "--Separator--":
+            return True
+
     def set_config_baseimg_layout(self):
         self.gtable.attach(self.image_title, 0, 40, 15+self.warning_shift, 17+self.warning_shift)
         self.gtable.attach(self.image_title_desc, 0, 40, 18+self.warning_shift, 22+self.warning_shift)
@@ -272,15 +279,13 @@ class ImageConfigurationPage (HobPage):
 
         # create button "Build image"
         self.just_bake_button = HobButton("Build image")
-        #self.just_bake_button.set_size_request(205, 49)
-        self.just_bake_button.set_tooltip_text("Build target image")
+        self.just_bake_button.set_tooltip_text("Build the image recipe as it is")
         self.just_bake_button.connect("clicked", self.just_bake_button_clicked_cb)
         button_box.pack_end(self.just_bake_button, expand=False, fill=False)
 
-        # create button "Edit Image"
-        self.edit_image_button = HobAltButton("Edit image")
-        #self.edit_image_button.set_size_request(205, 49)
-        self.edit_image_button.set_tooltip_text("Edit target image")
+        # create button "Edit image recipe"
+        self.edit_image_button = HobAltButton("Edit image recipe")
+        self.edit_image_button.set_tooltip_text("Customize the recipes and packages to be included in your image")
         self.edit_image_button.connect("clicked", self.edit_image_button_clicked_cb)
         button_box.pack_end(self.edit_image_button, expand=False, fill=False)
 
@@ -313,6 +318,8 @@ class ImageConfigurationPage (HobPage):
             self.builder.configuration.clear_selection()
         # reset machine_combo_changed_by_manual
         self.machine_combo_changed_by_manual = True
+
+        self.builder.configuration.selected_image = None
 
         # Do reparse recipes
         self.builder.populate_recipe_package_info_async()
@@ -362,7 +369,29 @@ class ImageConfigurationPage (HobPage):
     def image_combo_changed_cb(self, combo):
         self.builder.window_sensitive(False)
         selected_image = self.image_combo.get_active_text()
+        if selected_image == self.__custom_image__:
+            topdir = self.builder.get_topdir()
+            images_dir = topdir + "/recipes/images/"
+            self.builder.ensure_dir(images_dir)
+
+            dialog = RetrieveImageDialog(images_dir, "Select from my image recipes",
+                            self.builder, gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT)
+            response = dialog.run()
+            if response == gtk.RESPONSE_OK:
+                image_name = dialog.get_filename()
+                head, tail = os.path.split(image_name)
+                selected_image = os.path.splitext(tail)[0]
+                self.custom_image_selected = selected_image
+                self.update_image_combo(self.builder.recipe_model, selected_image)
+            else:
+                selected_image = self.__dummy_image__
+                self.update_image_combo(self.builder.recipe_model, None)
+            dialog.destroy()
+
         if not selected_image or (selected_image == self.__dummy_image__):
+            self.builder.window_sensitive(True)
+            self.just_bake_button.hide()
+            self.edit_image_button.hide()
             return
 
         # remove __dummy_image__ item from the store list after first user selection
@@ -428,6 +457,11 @@ class ImageConfigurationPage (HobPage):
             self.image_combo.append_text(self.__dummy_image__)
             cnt = cnt + 1
 
+        self.image_combo.append_text(self.__custom_image__)
+        self.image_combo.append_text("--Separator--")
+        cnt = cnt + 2
+
+        topdir = self.builder.get_topdir()
         # append and set active
         while it:
             path = image_model.get_path(it)
@@ -451,13 +485,25 @@ class ImageConfigurationPage (HobPage):
             else:
                 allow = True
 
+            file_name = image_model[path][recipe_model.COL_FILE]
+            if file_name and topdir in file_name:
+                allow = False
+
             if allow:
                 self.image_combo.append_text(image_name)
                 if image_name == selected_image:
                     active = cnt
                 cnt = cnt + 1
-
         self.image_combo.append_text(self.builder.recipe_model.__custom_image__)
+
+        if self.custom_image_selected:
+            self.image_combo.append_text("--Separator--")
+            cnt = cnt + 1
+            self.image_combo.append_text(self.custom_image_selected)
+            if self.custom_image_selected == selected_image:
+                active = cnt
+            cnt = cnt + 1
+
         if selected_image == self.builder.recipe_model.__custom_image__:
             active = cnt
 
@@ -471,14 +517,14 @@ class ImageConfigurationPage (HobPage):
     def layer_button_clicked_cb(self, button):
         # Create a layer selection dialog
         self.builder.show_layer_selection_dialog()
-        
+
     def view_adv_configuration_button_clicked_cb(self, button):
         # Create an advanced settings dialog
         response, settings_changed = self.builder.show_adv_settings_dialog()
         if not response:
             return
         if settings_changed:
-            self.builder.reparse_post_adv_settings()        
+            self.builder.reparse_post_adv_settings()
 
     def just_bake_button_clicked_cb(self, button):
         self.builder.parsing_warnings = []
