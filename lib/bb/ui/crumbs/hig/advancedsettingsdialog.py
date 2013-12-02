@@ -183,8 +183,9 @@ class AdvancedSettingsDialog (CrumbsDialog, SettingsUIHelper):
         self.set_save_button_state()
         if self.get_num_checked_image_types() == 0:
             # Show an error dialog
-            lbl = "<b>Select an image type</b>\n\nYou need to select at least one image type."
-            dialog = CrumbsMessageDialog(self, lbl, gtk.STOCK_DIALOG_WARNING)
+            lbl = "<b>Select an image type</b>"
+            msg = "You need to select at least one image type."
+            dialog = CrumbsMessageDialog(self, lbl, gtk.MESSAGE_WARNING, msg)
             button = dialog.add_button("OK", gtk.RESPONSE_OK)
             HobButton.style_button(button)
             response = dialog.run()
@@ -234,7 +235,10 @@ class AdvancedSettingsDialog (CrumbsDialog, SettingsUIHelper):
             article = ""
             if image_type.startswith(("a", "e", "i", "o", "u")):
                 article = "n"
-            self.image_types_checkbuttons[image_type].set_tooltip_text("Build a%s %s image" % (article, image_type))
+            if image_type == "live":
+                self.image_types_checkbuttons[image_type].set_tooltip_text("Build iso and hddimg images")
+            else:
+                self.image_types_checkbuttons[image_type].set_tooltip_text("Build a%s %s image" % (article, image_type))
             table.attach(self.image_types_checkbuttons[image_type], j - 1, j + 3, i, i + 1)
             if image_type in self.configuration.image_fstypes.split():
                 self.image_types_checkbuttons[image_type].set_active(True)

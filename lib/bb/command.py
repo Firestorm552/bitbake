@@ -86,6 +86,8 @@ class Command:
 
     def runAsyncCommand(self):
         try:
+            if self.cooker.state == bb.cooker.state.error:
+                return False
             if self.currentAsyncCommand is not None:
                 (command, options) = self.currentAsyncCommand
                 commandmethod = getattr(CommandsAsync, command)
@@ -117,14 +119,14 @@ class Command:
             return False
 
     def finishAsyncCommand(self, msg=None, code=None):
-        if msg:
+        if msg or msg == "":
             bb.event.fire(CommandFailed(msg), self.cooker.event_data)
         elif code:
             bb.event.fire(CommandExit(code), self.cooker.event_data)
         else:
             bb.event.fire(CommandCompleted(), self.cooker.event_data)
         self.currentAsyncCommand = None
-
+        self.cooker.finishcommand()
 
 class CommandsSync:
     """
@@ -137,13 +139,22 @@ class CommandsSync:
         """
         Trigger cooker 'shutdown' mode
         """
-        command.cooker.shutdown()
+        command.cooker.shutdown(False)
 
-    def stateStop(self, command, params):
+    def stateForceShutdown(self, command, params):
         """
         Stop the cooker
         """
-        command.cooker.stop()
+        command.cooker.shutdown(True)
+
+    def getAllKeysWithFlags(self, command, params):
+        """
+        Returns a dump of the global state. Call with
+        variable flags to be retrieved as params.
+        """
+        flaglist = params[0]
+        return command.cooker.getAllKeysWithFlags(flaglist)
+    getAllKeysWithFlags.readonly = True
 
     def getVariable(self, command, params):
         """
@@ -231,6 +242,13 @@ class CommandsSync:
         default_file = params[2]
         op = params[3]
         command.cooker.modifyConfigurationVar(var, val, default_file, op)
+
+    def removeVarFile(self, command, params):
+        """
+        Remove a variable declaration from a file
+        """
+        var = params[0]
+        command.cooker.removeConfigurationVar(var)
 
     def createConfigFile(self, command, params):
         """

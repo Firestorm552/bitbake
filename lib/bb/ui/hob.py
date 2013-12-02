@@ -46,7 +46,7 @@ from bb.ui.crumbs.hoblistmodel import RecipeListModel, PackageListModel
 from bb.ui.crumbs.hobeventhandler import HobHandler
 from bb.ui.crumbs.builder import Builder
 
-extraCaches = ['bb.cache_extra:HobRecipeInfo']
+featureSet = [bb.cooker.CookerFeatures.HOB_EXTRA_CACHES]
 
 def event_handle_idle_func(eventHandler, hobHandler):
     # Consume as many messages as we can in the time available to us
@@ -58,6 +58,19 @@ def event_handle_idle_func(eventHandler, hobHandler):
         event = eventHandler.getEvent()
     return True
 
+_evt_list = [ "bb.runqueue.runQueueExitWait", "bb.event.LogExecTTY", "logging.LogRecord",
+              "bb.build.TaskFailed", "bb.build.TaskBase", "bb.event.ParseStarted",
+              "bb.event.ParseProgress", "bb.event.ParseCompleted", "bb.event.CacheLoadStarted",
+              "bb.event.CacheLoadProgress", "bb.event.CacheLoadCompleted", "bb.command.CommandFailed",
+              "bb.command.CommandExit", "bb.command.CommandCompleted",  "bb.cooker.CookerExit",
+              "bb.event.MultipleProviders", "bb.event.NoProvider", "bb.runqueue.sceneQueueTaskStarted",
+              "bb.runqueue.runQueueTaskStarted", "bb.runqueue.runQueueTaskFailed", "bb.runqueue.sceneQueueTaskFailed",
+              "bb.event.BuildBase", "bb.build.TaskStarted", "bb.build.TaskSucceeded", "bb.build.TaskFailedSilent",
+              "bb.event.SanityCheckPassed", "bb.event.SanityCheckFailed", "bb.event.PackageInfo",
+              "bb.event.TargetsTreeGenerated", "bb.event.ConfigFilesFound", "bb.event.ConfigFilePathFound",
+              "bb.event.FilesMatchingFound", "bb.event.NetworkTestFailed", "bb.event.NetworkTestPassed",
+              "bb.event.BuildStarted", "bb.event.BuildCompleted", "bb.event.DiskFull"]
+
 def main (server, eventHandler, params):
     params.updateFromServer(server)
     gobject.threads_init()
@@ -68,6 +81,8 @@ def main (server, eventHandler, params):
     recipe_model = RecipeListModel()
     package_model = PackageListModel()
 
+    llevel, debug_domains = bb.msg.constructLogOptions()
+    server.runCommand(["setEventMask", server.getEventHandle(), llevel, debug_domains, _evt_list])
     hobHandler = HobHandler(server, recipe_model, package_model)
     builder = Builder(hobHandler, recipe_model, package_model)
 

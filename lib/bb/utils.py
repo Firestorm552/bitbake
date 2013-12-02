@@ -354,6 +354,9 @@ def better_exec(code, context, text = None, realfile = "<code>"):
         code = better_compile(code, realfile, realfile)
     try:
         exec(code, get_context(), context)
+    except bb.BBHandledException:
+        # Error already shown so passthrough
+        raise
     except Exception as e:
         (t, value, tb) = sys.exc_info()
 
@@ -532,6 +535,8 @@ def approved_variables():
     Determine and return the list of whitelisted variables which are approved
     to remain in the envrionment.
     """
+    if 'BB_PRESERVE_ENV' in os.environ:
+        return os.environ.keys()
     approved = []
     if 'BB_ENV_WHITELIST' in os.environ:
         approved = os.environ['BB_ENV_WHITELIST'].split()
@@ -722,7 +727,7 @@ def copyfile(src, dest, newmtime = None, sstat = None):
         if not sstat:
             sstat = os.lstat(src)
     except Exception as e:
-        print("copyfile: Stating source file failed...", e)
+        logger.warn("copyfile: stat of %s failed (%s)" % (src, e))
         return False
 
     destexists = 1
@@ -749,7 +754,7 @@ def copyfile(src, dest, newmtime = None, sstat = None):
             #os.lchown(dest,sstat[stat.ST_UID],sstat[stat.ST_GID])
             return os.lstat(dest)
         except Exception as e:
-            print("copyfile: failed to properly create symlink:", dest, "->", target, e)
+            logger.warn("copyfile: failed to create symlink %s to %s (%s)" % (dest, target, e))
             return False
 
     if stat.S_ISREG(sstat[stat.ST_MODE]):
@@ -764,7 +769,7 @@ def copyfile(src, dest, newmtime = None, sstat = None):
             shutil.copyfile(src, dest + "#new")
             os.rename(dest + "#new", dest)
         except Exception as e:
-            print('copyfile: copy', src, '->', dest, 'failed.', e)
+            logger.warn("copyfile: copy %s to %s failed (%s)" % (src, dest, e))
             return False
         finally:
             if srcchown:
@@ -775,13 +780,13 @@ def copyfile(src, dest, newmtime = None, sstat = None):
         #we don't yet handle special, so we need to fall back to /bin/mv
         a = getstatusoutput("/bin/cp -f " + "'" + src + "' '" + dest + "'")
         if a[0] != 0:
-            print("copyfile: Failed to copy special file:" + src + "' to '" + dest + "'", a)
+            logger.warn("copyfile: failed to copy special file %s to %s (%s)" % (src, dest, a))
             return False # failure
     try:
         os.lchown(dest, sstat[stat.ST_UID], sstat[stat.ST_GID])
         os.chmod(dest, stat.S_IMODE(sstat[stat.ST_MODE])) # Sticky is reset on chown
     except Exception as e:
-        print("copyfile: Failed to chown/chmod/unlink", dest, e)
+        logger.warn("copyfile: failed to chown/chmod %s (%s)" % (dest, e))
         return False
 
     if newmtime:
@@ -791,22 +796,28 @@ def copyfile(src, dest, newmtime = None, sstat = None):
         newmtime = sstat[stat.ST_MTIME]
     return newmtime
 
-def which(path, item, direction = 0):
+def which(path, item, direction = 0, history = False):
     """
     Locate a file in a PATH
     """
 
+    hist = []
     paths = (path or "").split(':')
     if direction != 0:
         paths.reverse()
 
     for p in paths:
         next = os.path.join(p, item)
+        hist.append(next)
         if os.path.exists(next):
             if not os.path.isabs(next):
                 next = os.path.abspath(next)
+            if history:
+                return next, hist
             return next
 
+    if history:
+        return "", hist
     return ""
 
 def to_boolean(string, default=None):

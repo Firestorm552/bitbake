@@ -29,8 +29,9 @@ import os
 import signal
 import sys
 import time
+import select
 from Queue import Empty
-from multiprocessing import Event, Process, util, Queue, Pipe, queues
+from multiprocessing import Event, Process, util, Queue, Pipe, queues, Manager
 
 from . import BitBakeBaseServer, BitBakeBaseServerConnection, BaseImplServer
 
@@ -77,12 +78,13 @@ class ProcessServer(Process, BaseImplServer):
     profile_filename = "profile.log"
     profile_processed_filename = "profile.log.processed"
 
-    def __init__(self, command_channel, event_queue):
+    def __init__(self, command_channel, event_queue, featurelist):
         BaseImplServer.__init__(self)
-        Process.__init__(self)
+        Process.__init__(self, args=(featurelist))
         self.command_channel = command_channel
         self.event_queue = event_queue
         self.event = EventAdapter(event_queue)
+        self.featurelist = featurelist
         self.quit = False
 
         self.keep_running = Event()
@@ -93,6 +95,14 @@ class ProcessServer(Process, BaseImplServer):
         for event in bb.event.ui_queue:
             self.event_queue.put(event)
         self.event_handle.value = bb.event.register_UIHhandler(self)
+
+        # process any feature changes based on what UI requested
+        original_featureset = list(self.cooker.featureset)
+        while len(self.featurelist)> 0:
+            self.cooker.featureset.setFeature(self.featurelist.pop())
+        if (original_featureset != list(self.cooker.featureset)):
+            self.cooker.reset()
+
         bb.cooker.server_main(self.cooker, self.main)
 
     def main(self):
@@ -105,17 +115,17 @@ class ProcessServer(Process, BaseImplServer):
                     command = self.command_channel.recv()
                     self.runCommand(command)
 
-                self.idle_commands(.1)
+                self.idle_commands(.1, [self.event_queue._reader, self.command_channel])
             except Exception:
                 logger.exception('Running command %s', command)
 
         self.event_queue.close()
         bb.event.unregister_UIHhandler(self.event_handle.value)
         self.command_channel.close()
-        self.cooker.stop()
+        self.cooker.shutdown(True)
         self.idle_commands(.1)
 
-    def idle_commands(self, delay):
+    def idle_commands(self, delay, fds = []):
         nextsleep = delay
 
         for function, data in self._idlefuns.items():
@@ -127,15 +137,15 @@ class ProcessServer(Process, BaseImplServer):
                     nextsleep = None
                 elif nextsleep is None:
                     continue
-                elif retval < nextsleep:
-                    nextsleep = retval
+                else:
+                    fds = fds + retval
             except SystemExit:
                 raise
             except Exception:
                 logger.exception('Running idle function')
 
         if nextsleep is not None:
-            time.sleep(nextsleep)
+            select.select(fds,[],[],nextsleep)
 
     def runCommand(self, command):
         """
@@ -197,13 +207,17 @@ class BitBakeServer(BitBakeBaseServer):
         #
         self.ui_channel, self.server_channel = Pipe()
         self.event_queue = ProcessEventQueue(0)
-        self.serverImpl = ProcessServer(self.server_channel, self.event_queue)
+        manager = Manager()
+        self.featurelist = manager.list()
+        self.serverImpl = ProcessServer(self.server_channel, self.event_queue, self.featurelist)
 
     def detach(self):
         self.serverImpl.start()
         return
 
-    def establishConnection(self):
+    def establishConnection(self, featureset):
+        for f in featureset:
+            self.featurelist.append(f)
         self.connection = BitBakeProcessServerConnection(self.serverImpl, self.ui_channel, self.event_queue)
         signal.signal(signal.SIGTERM, lambda i, s: self.connection.terminate())
         return self.connection

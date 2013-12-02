@@ -35,12 +35,13 @@ import hashlib
 import bb, bb.codeparser
 from bb   import utils
 from bb.COW  import COWDictBase
+import collections
 
 logger = logging.getLogger("BitBake.Data")
 
 __setvar_keyword__ = ["_append", "_prepend", "_remove"]
 __setvar_regexp__ = re.compile('(?P<base>.*?)(?P<keyword>_append|_prepend|_remove)(_(?P<add>.*))?$')
-__expand_var_regexp__ = re.compile(r"\${[^{}]+}")
+__expand_var_regexp__ = re.compile(r"\${[^{}@\n\t ]+}")
 __expand_python_regexp__ = re.compile(r"\${@.+?}")
 
 def infer_caller_details(loginfo, parent = False, varval = True):
@@ -88,15 +89,20 @@ class VariableParse:
 
         self.references = set()
         self.execs = set()
+        self.contains = collections.defaultdict(set)
 
     def var_sub(self, match):
             key = match.group()[2:-1]
             if self.varname and key:
                 if self.varname == key:
                     raise Exception("variable %s references itself!" % self.varname)
-            var = self.d.getVar(key, True)
+            if key in self.d.expand_cache:
+                varparse = self.d.expand_cache[key]
+                var = varparse.value
+            else:
+                var = self.d.getVar(key, True)
+            self.references.add(key)
             if var is not None:
-                self.references.add(key)
                 return var
             else:
                 return match.group()
@@ -116,6 +122,8 @@ class VariableParse:
             self.references |= parser.references
             self.execs |= parser.execs
 
+            for k in parser.contains:
+                self.contains[k].update(parser.contains[k])
             value = utils.better_eval(codeobj, DataContext(self.d))
             return str(value)
 
@@ -277,9 +285,13 @@ class VariableHistory(object):
                 lines.append(line)
         return lines
 
-    def del_var_history(self, var):
+    def del_var_history(self, var, f=None, line=None):
+        """If file f and line are not given, the entire history of var is deleted"""
         if var in self.variables:
-            self.variables[var] = []
+            if f and line:
+                self.variables[var] = [ x for x in self.variables[var] if x['file']!=f and x['line']!=line]
+            else:
+                self.variables[var] = []
 
 class DataSmart(MutableMapping):
     def __init__(self, special = COWDictBase.copy(), seen = COWDictBase.copy() ):
@@ -418,7 +430,7 @@ class DataSmart(MutableMapping):
                             self.setVar(append, sval)
                         elif op == "_remove":
                             removes = self.getVarFlag(append, "_removeactive", False) or []
-                            removes.append(a)
+                            removes.extend(a.split())
                             self.setVarFlag(append, "_removeactive", removes, ignore=True)
 
                     # We save overrides that may be applied at some later stage
@@ -505,12 +517,7 @@ class DataSmart(MutableMapping):
             self._seen_overrides[override].add( var )
 
     def getVar(self, var, expand=False, noweakdefault=False):
-        value = self.getVarFlag(var, "_content", False, noweakdefault)
-
-        # Call expand() separately to make use of the expand cache
-        if expand and value:
-            return self.expand(value, var)
-        return value
+        return self.getVarFlag(var, "_content", expand, noweakdefault)
 
     def renameVar(self, key, newkey, **loginfo):
         """
@@ -578,24 +585,33 @@ class DataSmart(MutableMapping):
         if flag == "defaultval" and '_' in var:
             self._setvar_update_overrides(var)
 
+        if flag == "unexport" or flag == "export":
+            if not "__exportlist" in self.dict:
+                self._makeShadowCopy("__exportlist")
+            if not "_content" in self.dict["__exportlist"]:
+                self.dict["__exportlist"]["_content"] = set()
+            self.dict["__exportlist"]["_content"].add(var)
+
     def getVarFlag(self, var, flag, expand=False, noweakdefault=False):
         local_var = self._findVar(var)
         value = None
-        if local_var:
+        if local_var is not None:
             if flag in local_var:
                 value = copy.copy(local_var[flag])
             elif flag == "_content" and "defaultval" in local_var and not noweakdefault:
                 value = copy.copy(local_var["defaultval"])
         if expand and value:
-            value = self.expand(value, None)
-        if value and flag == "_content" and local_var and "_removeactive" in local_var:
-            for i in local_var["_removeactive"]:
-                if " " + i + " " in value:
-                    value = value.replace(" " + i + " ", " ")
-                if value.startswith(i + " "):
-                    value = value[len(i + " "):]
-                if value.endswith(" " + i):
-                    value = value[:-len(" " + i)]
+            # Only getvar (flag == _content) hits the expand cache
+            cachename = None
+            if flag == "_content":
+                cachename = var
+            else:
+                cachename = var + "[" + flag + "]"
+            value = self.expand(value, cachename)
+        if value is not None and flag == "_content" and local_var is not None and "_removeactive" in local_var:
+            filtered = filter(lambda v: v not in local_var["_removeactive"],
+                              value.split(" "))
+            value = " ".join(filtered)
         return value
 
     def delVarFlag(self, var, flag, **loginfo):
@@ -640,16 +656,17 @@ class DataSmart(MutableMapping):
             self.varhistory.record(**loginfo)
             self.dict[var][i] = flags[i]
 
-    def getVarFlags(self, var):
+    def getVarFlags(self, var, expand = False, internalflags=False):
         local_var = self._findVar(var)
         flags = {}
 
         if local_var:
             for i in local_var:
-                if i.startswith("_"):
+                if i.startswith("_") and not internalflags:
                     continue
                 flags[i] = local_var[i]
-
+                if expand and i in expand:
+                    flags[i] = self.expand(flags[i], var + "[" + i + "]")
         if len(flags) == 0:
             return None
         return flags
@@ -755,13 +772,16 @@ class DataSmart(MutableMapping):
         for key in keys:
             if key in config_whitelist:
                 continue
+
             value = d.getVar(key, False) or ""
             data.update({key:value})
 
-            varflags = d.getVarFlags(key)
+            varflags = d.getVarFlags(key, internalflags = True)
             if not varflags:
                 continue
             for f in varflags:
+                if f == "_content":
+                    continue
                 data.update({'%s[%s]' % (key, f):varflags[f]})
 
         for key in ["__BBTASKS", "__BBANONFUNCS", "__BBHANDLERS"]:

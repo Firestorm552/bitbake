@@ -21,6 +21,7 @@
 
 import gobject
 import logging
+import ast
 from bb.ui.crumbs.runningbuild import RunningBuild
 
 class HobHandler(gobject.GObject):
@@ -97,6 +98,7 @@ class HobHandler(gobject.GObject):
 
         self.server = server
         self.error_msg = ""
+        self.lastCommand = ""
         self.initcmd = None
         self.parsing = False
 
@@ -111,6 +113,7 @@ class HobHandler(gobject.GObject):
             self.generating = False
 
     def runCommand(self, commandline):
+        self.lastCommand = commandline[0]
         try:
             result, error = self.server.runCommand(commandline)
             if error:
@@ -166,13 +169,11 @@ class HobHandler(gobject.GObject):
             self.clear_busy()
             self.building = True
             targets = [self.image]
-            if self.package_queue:
-                self.set_var_in_file("LINGUAS_INSTALL", "", "local.conf")
-                self.set_var_in_file("PACKAGE_INSTALL", " ".join(self.package_queue), "local.conf")
             if self.toolchain_packages:
                 self.set_var_in_file("TOOLCHAIN_TARGET_TASK", " ".join(self.toolchain_packages), "local.conf")
                 targets.append(self.toolchain)
             if targets[0] == "hob-image":
+                self.set_var_in_file("LINGUAS_INSTALL", "", "local.conf")
                 hobImage = self.runCommand(["matchFile", "hob-image.bb"])
                 if self.base_image != "Start with an empty image recipe":
                     baseImage = self.runCommand(["matchFile", self.base_image + ".bb"])
@@ -252,6 +253,10 @@ class HobHandler(gobject.GObject):
             self.current_phase = None
             self.run_next_command()
         elif isinstance(event, bb.command.CommandFailed):
+            if self.error_msg == "":
+                self.error_msg = "The command \"" + self.lastCommand
+                self.error_msg += "\" was sent to bitbake server but it failed. Please"
+                self.error_msg += " check the code executed by this command in bitbake."
             self.commands_async = []
             self.display_error()
         elif isinstance(event, (bb.event.ParseStarted,
@@ -317,7 +322,7 @@ class HobHandler(gobject.GObject):
 
     def set_machine(self, machine):
         if machine:
-            self.set_var_in_file("MACHINE", machine, "local.conf")
+            self.early_assign_var_in_file("MACHINE", machine, "local.conf")
 
     def set_sdk_machine(self, sdk_machine):
         self.set_var_in_file("SDKMACHINE", sdk_machine, "local.conf")
@@ -359,7 +364,20 @@ class HobHandler(gobject.GObject):
     def set_incompatible_license(self, incompat_license):
         self.set_var_in_file("INCOMPATIBLE_LICENSE", incompat_license, "local.conf")
 
+    def set_extra_setting(self, extra_setting):
+        self.set_var_in_file("EXTRA_SETTING", extra_setting, "local.conf")
+
     def set_extra_config(self, extra_setting):
+        old_extra_setting = ast.literal_eval(self.runCommand(["getVariable", "EXTRA_SETTING"]) or "{}")
+        if extra_setting:
+            self.set_var_in_file("EXTRA_SETTING", extra_setting, "local.conf")
+        else:
+            self.remove_var_from_file("EXTRA_SETTING")
+
+        #remove not needed settings from conf
+        for key in old_extra_setting:
+            if key not in extra_setting:
+                self.remove_var_from_file(key)
         for key in extra_setting.keys():
             value = extra_setting[key]
             self.set_var_in_file(key, value, "local.conf")
@@ -442,12 +460,12 @@ class HobHandler(gobject.GObject):
         self.building = False
 
     def cancel_parse(self):
-        self.runCommand(["stateStop"])
+        self.runCommand(["stateForceShutdown"])
 
     def cancel_build(self, force=False):
         if force:
             # Force the cooker to stop as quickly as possible
-            self.runCommand(["stateStop"])
+            self.runCommand(["stateForceShutdown"])
         else:
             # Wait for tasks to complete before shutting down, this helps
             # leave the workdir in a usable state
@@ -473,6 +491,14 @@ class HobHandler(gobject.GObject):
         self.runCommand(["enableDataTracking"])
         self.server.runCommand(["setVarFile", var, val, default_file, "set"])
         self.runCommand(["disableDataTracking"])
+
+    def early_assign_var_in_file(self, var, val, default_file=None):
+        self.runCommand(["enableDataTracking"])
+        self.server.runCommand(["setVarFile", var, val, default_file, "earlyAssign"])
+        self.runCommand(["disableDataTracking"])
+
+    def remove_var_from_file(self, var):
+        self.server.runCommand(["removeVarFile", var])
 
     def append_var_in_file(self, var, val, default_file=None):
         self.server.runCommand(["setVarFile", var, val, default_file, "append"])

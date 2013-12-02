@@ -69,9 +69,12 @@ class FuncFailed(Exception):
 class TaskBase(event.Event):
     """Base class for task events"""
 
-    def __init__(self, t, d ):
+    def __init__(self, t, logfile, d):
         self._task = t
         self._package = d.getVar("PF", True)
+        self.taskfile = d.getVar("FILE", True)
+        self.taskname = self._task
+        self.logfile = logfile
         event.Event.__init__(self)
         self._message = "recipe %s: task %s: %s" % (d.getVar("PF", True), t, self.getDisplayName())
 
@@ -88,6 +91,9 @@ class TaskBase(event.Event):
 
 class TaskStarted(TaskBase):
     """Task execution started"""
+    def __init__(self, t, logfile, taskflags, d):
+        super(TaskStarted, self).__init__(t, logfile, d)
+        self.taskflags = taskflags
 
 class TaskSucceeded(TaskBase):
     """Task execution completed"""
@@ -96,16 +102,11 @@ class TaskFailed(TaskBase):
     """Task execution failed"""
 
     def __init__(self, task, logfile, metadata, errprinted = False):
-        self.logfile = logfile
         self.errprinted = errprinted
-        super(TaskFailed, self).__init__(task, metadata)
+        super(TaskFailed, self).__init__(task, logfile, metadata)
 
 class TaskFailedSilent(TaskBase):
     """Task execution failed (silently)"""
-    def __init__(self, task, logfile, metadata):
-        self.logfile = logfile
-        super(TaskFailedSilent, self).__init__(task, metadata)
-
     def getDisplayName(self):
         # Don't need to tell the user it was silent
         return "Failed"
@@ -113,7 +114,7 @@ class TaskFailedSilent(TaskBase):
 class TaskInvalid(TaskBase):
 
     def __init__(self, task, metadata):
-        super(TaskInvalid, self).__init__(task, metadata)
+        super(TaskInvalid, self).__init__(task, None, metadata)
         self._message = "No such task '%s'" % task
 
 
@@ -287,7 +288,7 @@ set -e
         if bb.msg.loggerVerboseLogs:
             script.write("set -x\n")
         if cwd:
-            script.write("cd %s\n" % cwd)
+            script.write("cd '%s'\n" % cwd)
         script.write("%s\n" % func)
         script.write('''
 # cleanup
@@ -347,6 +348,14 @@ def _exec_task(fn, task, d, quieterr):
     tempdir = localdata.getVar('T', True)
     if not tempdir:
         bb.fatal("T variable not set, unable to build")
+
+    # Change nice level if we're asked to
+    nice = localdata.getVar("BB_TASK_NICE_LEVEL", True)
+    if nice:
+        curnice = os.nice(0)
+        nice = int(nice) - curnice
+        newnice = os.nice(nice)
+        logger.debug(1, "Renice to %s " % newnice)
 
     bb.utils.mkdirhier(tempdir)
 
@@ -416,7 +425,9 @@ def _exec_task(fn, task, d, quieterr):
     localdata.setVar('BB_LOGFILE', logfn)
     localdata.setVar('BB_RUNTASK', task)
 
-    event.fire(TaskStarted(task, localdata), localdata)
+    flags = localdata.getVarFlags(task)
+
+    event.fire(TaskStarted(task, logfn, flags, localdata), localdata)
     try:
         for func in (prefuncs or '').split():
             exec_func(func, localdata)
@@ -453,7 +464,7 @@ def _exec_task(fn, task, d, quieterr):
             logger.debug(2, "Zero size logfn %s, removing", logfn)
             bb.utils.remove(logfn)
             bb.utils.remove(loglink)
-    event.fire(TaskSucceeded(task, localdata), localdata)
+    event.fire(TaskSucceeded(task, logfn, localdata), localdata)
 
     if not localdata.getVarFlag(task, 'nostamp') and not localdata.getVarFlag(task, 'selfstamp'):
         make_stamp(task, localdata)
@@ -467,7 +478,7 @@ def exec_task(fn, task, d, profile = False):
             quieterr = True
 
         if profile: 
-            profname = "profile-%s.log" % (os.path.basename(fn) + "-" + task)
+            profname = "profile-%s.log" % (d.getVar("PN", True) + "-" + task)
             try:
                 import cProfile as profile
             except:

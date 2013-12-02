@@ -199,7 +199,9 @@ class PackageListModel(gtk.ListStore):
         return self.cmp_vals(val1, val2, user_data)
 
     def cmp_vals(self, val1, val2, user_data):
-        if val1.startswith(user_data) and not val2.startswith(user_data):
+        if val1 is None or val2 is None:
+            return 0
+        elif val1.startswith(user_data) and not val2.startswith(user_data):
             return -1
         elif not val1.startswith(user_data) and val2.startswith(user_data):
             return 1
@@ -575,7 +577,9 @@ class RecipeListModel(gtk.ListStore):
         return self.cmp_vals(val1, val2, user_data)
 
     def cmp_vals(self, val1, val2, user_data):
-        if val1.startswith(user_data) and not val2.startswith(user_data):
+        if val1 is None or val2 is None:
+            return 0
+        elif val1.startswith(user_data) and not val2.startswith(user_data):
             return -1
         elif not val1.startswith(user_data) and val2.startswith(user_data):
             return 1
@@ -690,7 +694,7 @@ class RecipeListModel(gtk.ListStore):
             inherits = event_model["pn"][item]["inherits"]
             summary = event_model["pn"][item]["summary"]
             version = event_model["pn"][item]["version"]
-            revision = event_model["pn"][item]["revision"]
+            revision = event_model["pn"][item]["prevision"]
             homepage = event_model["pn"][item]["homepage"]
             bugtracker = event_model["pn"][item]["bugtracker"]
             filename = event_model["pn"][item]["filename"]

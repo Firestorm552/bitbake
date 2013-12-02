@@ -306,8 +306,10 @@ def main(server, eventHandler, params, tf = TerminalFilter):
 
     while True:
         try:
-            termfilter.updateFooter()
-            event = eventHandler.waitEvent(0.25)
+            event = eventHandler.waitEvent(0)
+            if event is None:
+                termfilter.updateFooter()
+                event = eventHandler.waitEvent(0.25)
             if event is None:
                 if main.shutdown > 1:
                     break
@@ -403,8 +405,9 @@ def main(server, eventHandler, params, tf = TerminalFilter):
 
             if isinstance(event, bb.command.CommandFailed):
                 return_value = event.exitcode
-                errors = errors + 1
-                logger.error("Command execution failed: %s", event.error)
+                if event.error:
+                    errors = errors + 1
+                    logger.error("Command execution failed: %s", event.error)
                 main.shutdown = 2
                 continue
             if isinstance(event, bb.command.CommandExit):
@@ -469,8 +472,12 @@ def main(server, eventHandler, params, tf = TerminalFilter):
                              event.taskid, event.taskstring, event.exitcode)
                 continue
 
+            if isinstance(event, bb.event.DepTreeGenerated):
+                continue
+
             # ignore
             if isinstance(event, (bb.event.BuildBase,
+                                  bb.event.MetadataEvent,
                                   bb.event.StampUpdate,
                                   bb.event.ConfigParsed,
                                   bb.event.RecipeParsed,
@@ -497,7 +504,7 @@ def main(server, eventHandler, params, tf = TerminalFilter):
                 main.shutdown = 2
             if not params.observe_only and main.shutdown == 1:
                 print("\nSecond Keyboard Interrupt, stopping...\n")
-                _, error = server.runCommand(["stateStop"])
+                _, error = server.runCommand(["stateForceShutdown"])
                 if error:
                     logger.error("Unable to cleanly stop: %s" % error)
             if not params.observe_only and main.shutdown == 0:
@@ -518,7 +525,7 @@ def main(server, eventHandler, params, tf = TerminalFilter):
     if warnings:
         summary += pluralise("\nSummary: There was %s WARNING message shown.",
                              "\nSummary: There were %s WARNING messages shown.", warnings)
-    if return_value:
+    if return_value and errors:
         summary += pluralise("\nSummary: There was %s ERROR message shown, returning a non-zero exit code.",
                              "\nSummary: There were %s ERROR messages shown, returning a non-zero exit code.", errors)
     if summary:

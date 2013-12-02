@@ -70,9 +70,11 @@ class SaveImageDialog (CrumbsDialog):
         sub_label.set_alignment(0, 0)
         sub_label.set_markup("The description should be less than 150 characters long.")
         self.description_entry = gtk.TextView()
-        self.description_entry.get_buffer().set_text(self.description_field)
+        description_buffer = self.description_entry.get_buffer()
+        description_buffer.set_text(self.description_field)
+        description_buffer.connect("insert-text", self.limit_description_length)
         self.description_entry.set_wrap_mode(gtk.WRAP_WORD)
-        self.description_entry.set_size_request(350,150)
+        self.description_entry.set_size_request(350,50)
         sub_vbox.pack_start(label, expand=False, fill=False)
         sub_vbox.pack_start(sub_label, expand=False, fill=False)
         sub_vbox.pack_start(self.description_entry, expand=False, fill=False)
@@ -108,6 +110,13 @@ class SaveImageDialog (CrumbsDialog):
 
         self.show_all()
 
+    def limit_description_length(self, textbuffer, iter, text, length):
+        buffer_bounds = textbuffer.get_bounds()
+        entire_text = textbuffer.get_text(*buffer_bounds)
+        entire_text += text
+        if len(entire_text)>150 or text=="\n":
+            textbuffer.emit_stop_by_name("insert-text")
+
     def name_entry_changed(self, entry):
         text = entry.get_text()
         if text == '':
@@ -137,12 +146,11 @@ class SaveImageDialog (CrumbsDialog):
             self.show_invalid_input_error_dialog()
 
     def show_invalid_input_error_dialog(self):
-        lbl = "<b>Invalid characters in image recipe name</b>\n"
+        lbl = "<b>Invalid characters in image recipe name</b>"
         msg = "Image recipe names should be all lowercase and\n"
         msg += "include only alphanumeric characters. The only\n"
         msg += "special character you can use is the ASCII hyphen (-)."
-        lbl = lbl + "\n%s\n" % glib.markup_escape_text(msg)
-        dialog = CrumbsMessageDialog(self, lbl, gtk.STOCK_DIALOG_ERROR)
+        dialog = CrumbsMessageDialog(self, lbl, gtk.MESSAGE_ERROR, msg)
         button = dialog.add_button("Close", gtk.RESPONSE_OK)
         HobButton.style_button(button)
 

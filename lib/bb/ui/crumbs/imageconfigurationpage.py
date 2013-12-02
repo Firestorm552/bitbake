@@ -300,7 +300,12 @@ class ImageConfigurationPage (HobPage):
     def view_warnings_button_clicked_cb(self, button):
         self.builder.show_warning_dialog()
 
+    def machine_combo_changed_idle_cb(self):
+        self.builder.window.set_cursor(None)
+
     def machine_combo_changed_cb(self, machine_combo):
+        self.builder.window.set_cursor(gtk.gdk.Cursor(gtk.gdk.WATCH))
+        self.builder.wait(0.1) #wait for combo and cursor to update
         self.stopping = False
         self.builder.parsing_warnings = []
         combo_item = machine_combo.get_active_text()
@@ -323,6 +328,8 @@ class ImageConfigurationPage (HobPage):
 
         # Do reparse recipes
         self.builder.populate_recipe_package_info_async()
+
+        glib.idle_add(self.machine_combo_changed_idle_cb)
 
     def update_machine_combo(self):
         self.disable_warnings_bar()
@@ -387,6 +394,10 @@ class ImageConfigurationPage (HobPage):
                 selected_image = self.__dummy_image__
                 self.update_image_combo(self.builder.recipe_model, None)
             dialog.destroy()
+        else:
+            if self.custom_image_selected:
+                self.custom_image_selected = None
+                self.update_image_combo(self.builder.recipe_model, selected_image)
 
         if not selected_image or (selected_image == self.__dummy_image__):
             self.builder.window_sensitive(True)
@@ -496,16 +507,15 @@ class ImageConfigurationPage (HobPage):
                 cnt = cnt + 1
         self.image_combo.append_text(self.builder.recipe_model.__custom_image__)
 
-        if self.custom_image_selected:
-            self.image_combo.append_text("--Separator--")
-            cnt = cnt + 1
-            self.image_combo.append_text(self.custom_image_selected)
-            if self.custom_image_selected == selected_image:
-                active = cnt
-            cnt = cnt + 1
-
         if selected_image == self.builder.recipe_model.__custom_image__:
             active = cnt
+
+        if self.custom_image_selected:
+            self.image_combo.append_text("--Separator--")
+            self.image_combo.append_text(self.custom_image_selected)
+            cnt = cnt + 2
+            if self.custom_image_selected == selected_image:
+                active = cnt
 
         self.image_combo.set_active(active)
 
@@ -524,7 +534,10 @@ class ImageConfigurationPage (HobPage):
         if not response:
             return
         if settings_changed:
+            self.builder.window.set_cursor(gtk.gdk.Cursor(gtk.gdk.WATCH))
+            self.builder.wait(0.1) #wait for adv_settings_dialog to terminate
             self.builder.reparse_post_adv_settings()
+            self.builder.window.set_cursor(None)
 
     def just_bake_button_clicked_cb(self, button):
         self.builder.parsing_warnings = []

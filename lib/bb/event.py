@@ -237,7 +237,7 @@ class UIEventFilter(object):
                 return True
             return False
         eid = str(event.__class__)[8:-2]
-        if eid not in self.eventmask:
+        if self.eventmask and eid not in self.eventmask:
             return False
         return True
 
@@ -588,6 +588,16 @@ class PackageInfo(Event):
     def __init__(self, pkginfolist):
         Event.__init__(self)
         self._pkginfolist = pkginfolist
+
+class MetadataEvent(Event):
+    """
+    Generic event that target for OE-Core classes
+    to report information during asynchrous execution
+    """
+    def __init__(self, eventtype, eventdata):
+        Event.__init__(self)
+        self.type = eventtype
+        self.data = eventdata
 
 class SanityCheck(Event):
     """
